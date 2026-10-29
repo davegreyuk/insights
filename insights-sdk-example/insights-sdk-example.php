@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Insights SDK Example
- * Description: Demo product for the Insights SDK: a settings screen whose features are reported, a built-in mock backend, and a debug panel showing what the SDK stores and sends.
+ * Description: Demo product for the Insights SDK: a settings screen whose features are reported, a built-in mock backend, and a debug panel showing what the SDK stores and sends. For local and development sites only: the mock backend accepts public requests.
  * Version: 1.0.0
  * Requires PHP: 7.4
  * Author: Dave Grey @ Friendly Web Guy Plugins
@@ -81,7 +81,8 @@ add_action( 'add_option_iex_settings', static function () {
 
 // ── Mock backend ─────────────────────────────────────────────────────────────
 // Stands in for the real service: accepts ingest/erase, keeps the last 20
-// requests for the debug panel, and can be told to fail with a 500.
+// requests for the debug panel, and can be told to fail with a 500. The routes
+// are public, so bodies are capped at 64 KB to bound what can be stored.
 
 add_action( 'rest_api_init', static function () {
     foreach ( [ 'ingest', 'erase' ] as $route ) {
@@ -91,6 +92,9 @@ add_action( 'rest_api_init', static function () {
             'callback'            => static function ( WP_REST_Request $request ) use ( $route ) {
                 if ( 'pk_example' !== $request->get_header( 'x_insights_key' ) ) {
                     return new WP_Error( 'bad_key', 'Unknown product key', [ 'status' => 401 ] );
+                }
+                if ( strlen( (string) $request->get_body() ) > 65536 ) {
+                    return new WP_Error( 'too_large', 'Payload too large', [ 'status' => 413 ] );
                 }
                 $fail = (bool) get_option( 'iex_mock_fail' );
                 $log  = (array) get_option( 'iex_received', [] );
@@ -111,7 +115,9 @@ add_action( 'rest_api_init', static function () {
 
 // Loopback to this site: skip certificate checks (Local's self-signed HTTPS).
 add_filter( 'http_request_args', static function ( $args, $url ) {
-    if ( false !== strpos( $url, 'rest_route=/insights-example/v1' ) ) {
+    if ( false !== strpos( $url, 'rest_route=/insights-example/v1' )
+        && wp_parse_url( $url, PHP_URL_HOST ) === wp_parse_url( home_url(), PHP_URL_HOST )
+    ) {
         $args['sslverify'] = false;
     }
     return $args;
@@ -152,6 +158,12 @@ add_action( 'admin_post_iex_debug', static function () {
     $sdk = insights_sdk( 'iex' );
     $do  = sanitize_key( wp_unslash( $_POST['do'] ?? '' ) );
     $msg = '';
+
+    // Only the mock backend buttons work without a running SDK.
+    if ( ! $sdk && ! in_array( $do, [ 'toggle_fail', 'clear_log' ], true ) ) {
+        $do  = '';
+        $msg = 'The SDK isn\'t running (missing key, endpoint or site ID).';
+    }
 
     switch ( $do ) {
         case 'opt_in':

@@ -36,7 +36,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-$insights_sdk_this_version = '1.0.0';
+$insights_sdk_this_version = '1.1.0';
 
 global $insights_sdk_registry;
 if ( ! is_array( $insights_sdk_registry ) ) {
@@ -72,7 +72,7 @@ if ( ! function_exists( 'insights_sdk_init' ) ) {
     function insights_sdk( string $slug ): ?\InsightsSDK\Client
     {
         global $insights_sdk_registry;
-        return $insights_sdk_registry['clients'][ $slug ] ?? null;
+        return $insights_sdk_registry['clients'][ sanitize_key( $slug ) ] ?? null;
     }
 
     /**
@@ -100,7 +100,8 @@ if ( ! function_exists( 'insights_sdk_init' ) ) {
              * Filters a product's config before its client is created, e.g. to
              * point a staging site or a test suite at a different backend.
              */
-            $config = (array) apply_filters( 'insights_sdk_config', $config );
+            $config         = (array) apply_filters( 'insights_sdk_config', $config );
+            $config['slug'] = sanitize_key( (string) ( $config['slug'] ?? '' ) );
 
             // No backend to send to, or no site ID from the host: don't start, so no opt-in is offered.
             if ( empty( $config['slug'] ) || empty( $config['key'] ) || empty( $config['endpoint'] ) || empty( $config['site_id'] )

@@ -13,7 +13,7 @@ class Settings
     const DEFAULTS = [
         'retention_days'      => 365, // Events, usage and activity older than this are deleted; so are sites not seen for this long.
         'quiet_days'          => 14,  // A site still marked active but silent for longer than this is "quiet".
-        'rate_limit'          => 300, // Requests per hour per IP address and product.
+        'rate_limit'          => 300, // Requests per hour per IP address and product key.
         'delete_on_uninstall' => 0,
     ];
 

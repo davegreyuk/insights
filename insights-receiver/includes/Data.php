@@ -19,11 +19,14 @@ class Data
     const MAX_EVENTS   = 200;
 
     /**
-     * Create or update the site row from a request's base fields.
+     * Create or update the site row from a request's base fields. The first
+     * secret a site sends is kept (see Ingest); callers check it beforehand.
      *
-     * @return int Site primary key.
+     * @param string $secret_hash From hash_secret(); '' when none was sent.
+     * @return int Site primary key, or 0 if a concurrent first report claimed
+     *             the site with a different secret.
      */
-    public static function upsert_site( int $product_id, string $site_id, array $body, int $now ): int
+    public static function upsert_site( int $product_id, string $site_id, array $body, int $now, string $secret_hash = '' ): int
     {
         global $wpdb;
         $table = Schema::table( 'sites' );
@@ -46,18 +49,51 @@ class Data
             $row['last_snapshot'] = $now;
         }
 
-        $id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM $table WHERE product_id = %d AND site_id = %s", $product_id, $site_id ) );
-        if ( $id ) {
-            $wpdb->update( $table, $row, [ 'id' => $id ] );
-            return $id;
+        $site = self::site_row( $product_id, $site_id );
+        if ( ! $site ) {
+            $insert = $row + [ 'product_id' => $product_id, 'site_id' => $site_id, 'first_seen' => $now, 'secret_hash' => $secret_hash ];
+            // Explicit formats: wpdb treats a column named site_id as an integer (core's multisite column).
+            if ( $wpdb->insert( $table, $insert, array_map( static function ( $v ) {
+                return is_int( $v ) ? '%d' : '%s';
+            }, $insert ) ) ) {
+                return (int) $wpdb->insert_id;
+            }
+            // Lost a race with a concurrent first report: use the row it created.
+            $site = self::site_row( $product_id, $site_id );
+            if ( ! $site || ! self::secret_matches( $site, $secret_hash ) ) {
+                return 0;
+            }
         }
 
-        $row += [ 'product_id' => $product_id, 'site_id' => $site_id, 'first_seen' => $now ];
-        // Explicit formats: wpdb treats a column named site_id as an integer (core's multisite column).
-        $wpdb->insert( $table, $row, array_map( static function ( $v ) {
-            return is_int( $v ) ? '%d' : '%s';
-        }, $row ) );
-        return (int) $wpdb->insert_id;
+        if ( '' === $site->secret_hash && '' !== $secret_hash ) {
+            $row['secret_hash'] = $secret_hash;
+        }
+        $wpdb->update( $table, $row, [ 'id' => (int) $site->id ] );
+        return (int) $site->id;
+    }
+
+    /** A site's ID and secret hash, or null if it hasn't reported. */
+    public static function site_row( int $product_id, string $site_id ): ?object
+    {
+        global $wpdb;
+        $row = $wpdb->get_row( $wpdb->prepare(
+            'SELECT id, secret_hash FROM ' . Schema::table( 'sites' ) . ' WHERE product_id = %d AND site_id = %s',
+            $product_id,
+            $site_id
+        ) );
+        return $row ?: null;
+    }
+
+    /** Hash of a secret sent in X-Insights-Site-Secret; '' if none or malformed. */
+    public static function hash_secret( string $secret ): string
+    {
+        return preg_match( '/^[A-Za-z0-9_\-]{16,128}$/', $secret ) ? hash( 'sha256', $secret ) : '';
+    }
+
+    /** Sites that have never sent a secret (SDK before 1.1) accept any request. */
+    public static function secret_matches( object $site, string $secret_hash ): bool
+    {
+        return '' === (string) $site->secret_hash || hash_equals( (string) $site->secret_hash, $secret_hash );
     }
 
     /**
@@ -203,7 +239,7 @@ class Data
 
     public static function text( $value, int $max ): string
     {
-        return is_scalar( $value ) ? substr( sanitize_text_field( (string) $value ), 0, $max ) : '';
+        return is_scalar( $value ) ? mb_substr( sanitize_text_field( (string) $value ), 0, $max ) : '';
     }
 
     /** A sent timestamp, or 0 if missing or implausible (before 2020 or in the future). */

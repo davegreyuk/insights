@@ -27,16 +27,18 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Client
 {
-    const SDK_VERSION = '1.0.0';
+    const SDK_VERSION = '1.1.0';
 
     private $config;
     private $store;
     private $transport;
     private $events = [];
+    private $usage  = []; // Uses tracked this request, saved once on shutdown.
 
     public function __construct( array $config )
     {
-        $this->config = $config + [
+        $config['slug'] = sanitize_key( (string) ( $config['slug'] ?? '' ) );
+        $this->config   = $config + [
             'name'     => $config['slug'],
             'key'      => '',
             'endpoint' => '',
@@ -48,7 +50,7 @@ class Client
             'notice'   => true,
             'strings'  => [],
         ];
-        $this->config['strings'] += [
+        $this->config['strings'] = (array) $this->config['strings'] + [
             'allow'      => 'Allow',
             'deny'       => 'No thanks',
             'disclosure' => 'Help us improve by sharing which features this site uses: the site address, feature on/off state, usage counts, plan, and WordPress/PHP versions. Nothing about your visitors or users, and you can stop at any time.',
@@ -64,6 +66,7 @@ class Client
     public function register(): void
     {
         add_action( $this->cron_hook(), [ $this, 'send_snapshot' ] );
+        add_action( 'shutdown', [ $this, 'save_usage' ] );
         add_action( 'shutdown', [ $this, 'flush_events' ] );
 
         if ( $this->config['file'] ) {
@@ -128,10 +131,11 @@ class Client
     public function opt_out(): void
     {
         if ( $this->is_opted_in() ) {
-            $this->transport->post( 'erase', [ 'site_id' => $this->call( 'site_id' ) ], false );
+            $this->post( 'erase', [ 'site_id' => $this->call( 'site_id' ) ], false );
         }
         wp_clear_scheduled_hook( $this->cron_hook() );
         $this->events = [];
+        $this->usage  = [];
         $this->store->clear();
         $this->store->set( 'optin', 'no' );
     }
@@ -151,6 +155,7 @@ class Client
      * Count one use of a feature. $action is 'feature' or 'feature.detail'
      * (e.g. 'exports.run'); the part before the first dot must match a key the
      * 'features' callback returns for it to count towards that feature.
+     * Counted in memory and saved once at the end of the request.
      */
     public function track( string $action ): void
     {
@@ -162,11 +167,30 @@ class Client
             return;
         }
 
-        $usage = (array) $this->store->get( 'usage', [] );
-        $usage[ $action ] = [
-            'uses'      => (int) ( $usage[ $action ]['uses'] ?? 0 ) + 1,
+        $this->usage[ $action ] = [
+            'uses'      => (int) ( $this->usage[ $action ]['uses'] ?? 0 ) + 1,
             'last_used' => time(),
         ];
+    }
+
+    /**
+     * Add this request's tracked uses to the stored counters. Runs on shutdown.
+     */
+    public function save_usage(): void
+    {
+        $pending     = $this->usage;
+        $this->usage = [];
+        if ( ! $pending || ! $this->is_opted_in() ) {
+            return;
+        }
+
+        $usage = (array) $this->store->get( 'usage', [] );
+        foreach ( $pending as $action => $count ) {
+            $usage[ $action ] = [
+                'uses'      => (int) ( $usage[ $action ]['uses'] ?? 0 ) + $count['uses'],
+                'last_used' => $count['last_used'],
+            ];
+        }
         $this->store->set( 'usage', $usage );
     }
 
@@ -235,11 +259,12 @@ class Client
             return false;
         }
 
+        $this->save_usage();
         $state   = $this->sync_features();
         $usage   = (array) $this->store->get( 'usage', [] );
         $payload = $this->snapshot_payload( $state, $usage );
 
-        if ( ! $this->transport->post( 'ingest', $payload ) ) {
+        if ( ! $this->post( 'ingest', $payload ) ) {
             return false;
         }
         $this->events = [];
@@ -267,6 +292,7 @@ class Client
         if ( ! $this->is_opted_in() ) {
             return null;
         }
+        $this->save_usage();
         return $this->snapshot_payload(
             (array) $this->store->get( 'state', [] ),
             (array) $this->store->get( 'usage', [] )
@@ -316,19 +342,31 @@ class Client
         if ( empty( $this->events ) || ! $this->is_opted_in() ) {
             return;
         }
-        $this->transport->post( 'ingest', $this->base_payload() + [ 'events' => $this->events ], false );
+        $this->post( 'ingest', $this->base_payload() + [ 'events' => $this->events ], false );
         $this->events = [];
     }
 
     public function on_deactivate(): void
     {
         if ( $this->is_opted_in() && $this->allowed() ) {
-            $this->transport->post( 'ingest', $this->base_payload() + [ 'active' => false ], false );
+            $this->post( 'ingest', $this->base_payload() + [ 'active' => false ], false );
         }
         wp_clear_scheduled_hook( $this->cron_hook() );
     }
 
     // ── Internals ────────────────────────────────────────────────────────────
+
+    /**
+     * Every request carries this install's secret, so only this install can
+     * update or erase its record once the backend has seen it. Derived from
+     * the site's salts rather than stored, so it survives opt-out, uninstall
+     * and reinstall; it changes only if the salts are rotated.
+     */
+    private function post( string $path, array $payload, bool $blocking = true ): bool
+    {
+        $secret = hash_hmac( 'sha256', 'insights-sdk|' . $this->slug(), wp_salt( 'auth' ) );
+        return $this->transport->post( $path, $payload, $blocking, [ 'X-Insights-Site-Secret' => $secret ] );
+    }
 
     private function cron_hook(): string
     {

@@ -33,7 +33,7 @@ insights_sdk_init( [
 
 // Any time after plugins_loaded:
 if ( $insights = insights_sdk( 'myplugin' ) ) {
-    $insights->track( 'exports.run' );       // One use. The part before the first dot is the feature.
+    $insights->track( 'exports.run' );       // One use. The part before the first dot is the feature. Saved once per request.
     $insights->event( 'upgrade_clicked' );   // Sent at the end of the request
     $insights->sync_features();              // Optional, right after a toggle, for exact timings
 }
@@ -53,6 +53,8 @@ Each copy of `start.php` registers its version, and on `plugins_loaded` (priorit
 
 Every request is a JSON `POST`. The product key is sent both in the `X-Insights-Key` header and as `key` in the body.
 
+Since 1.1, every request also carries `X-Insights-Site-Secret`: an HMAC of the slug keyed with the site's `AUTH_KEY`/`AUTH_SALT`, so it's stable across opt-out, uninstall and reinstall, and different per product. The backend should store a hash of the first secret it sees for a `site_id` and refuse later ingest and erase requests for that site without it. Otherwise anyone who reads the public key out of the product can overwrite or erase any install's data.
+
 ### `POST {endpoint}/ingest`
 
 There are three kinds of ingest request. All of them carry these base fields:
@@ -60,7 +62,7 @@ There are three kinds of ingest request. All of them carry these base fields:
 ```json
 {
   "key": "pk_…",
-  "sdk_version": "1.0.0",
+  "sdk_version": "1.1.0",
   "site_id": "whatever the host passes as site_id, e.g. https://example.com",
   "plan": "pro | trial:pro | null",
   "product_version": "2.0.1",

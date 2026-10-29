@@ -25,9 +25,10 @@ class Transport
      * @param string $path    Path under the endpoint, e.g. 'ingest'.
      * @param array  $payload Body; the product key is added.
      * @param bool   $blocking Wait for the response.
+     * @param array  $headers  Extra headers.
      * @return bool True on a 2xx response (always true when not blocking).
      */
-    public function post( string $path, array $payload, bool $blocking = true ): bool
+    public function post( string $path, array $payload, bool $blocking = true, array $headers = [] ): bool
     {
         if ( '' === $this->endpoint || '' === $this->key ) {
             return false;
@@ -37,7 +38,7 @@ class Transport
             'headers'  => [
                 'Content-Type'   => 'application/json',
                 'X-Insights-Key' => $this->key,
-            ],
+            ] + $headers,
             'body'     => wp_json_encode( [ 'key' => $this->key ] + $payload ),
             'timeout'  => $blocking ? 15 : 3,
             'blocking' => $blocking,

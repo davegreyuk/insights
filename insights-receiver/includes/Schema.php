@@ -12,7 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  * functions and the SQL runs on MySQL, MariaDB and SQLite alike.
  *
  *  products       one per plugin/theme reporting in, with its public key
- *  sites          one per (product, site_id): latest environment and status
+ *  sites          one per (product, site_id): latest environment and status,
+ *                 and a hash of the install's secret once it has sent one
  *  site_features  each site's current features: on/off, since, total uses
  *  usage          uses per site, action and day received
  *  events         feature_enabled / feature_disabled and custom events
@@ -20,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Schema
 {
-    const VERSION = '1';
+    const VERSION = '2';
 
     public static function table( string $name ): string
     {
@@ -64,6 +65,7 @@ class Schema
                 php_version varchar(16) NOT NULL DEFAULT '',
                 multisite tinyint(1) NOT NULL DEFAULT 0,
                 locale varchar(16) NOT NULL DEFAULT '',
+                secret_hash varchar(64) NOT NULL DEFAULT '',
                 PRIMARY KEY  (id),
                 UNIQUE KEY product_site (product_id,site_id),
                 KEY product_seen (product_id,last_seen)
@@ -86,7 +88,7 @@ class Schema
                 action varchar(100) NOT NULL DEFAULT '',
                 feature varchar(100) NOT NULL DEFAULT '',
                 day char(10) NOT NULL DEFAULT '',
-                uses int(11) NOT NULL DEFAULT 0,
+                uses bigint(20) NOT NULL DEFAULT 0,
                 PRIMARY KEY  (site_pk,action,day),
                 KEY day (day),
                 KEY feature (feature)

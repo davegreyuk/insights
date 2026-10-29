@@ -218,11 +218,12 @@ class Admin
             . self::kv( 'Multisite', $site['multisite'] ? 'Yes' : 'No' )
             . self::kv( 'Locale', $site['locale'] )
             . self::kv( 'SDK version', $site['sdk_version'] )
+            . self::kv( 'Site secret', $site['has_secret'] ? 'Set: only this install can update or erase it' : 'Not sent (SDK before 1.1)' )
             . self::kv( 'Internal ID', (string) $site['id'] )
             . '</tbody></table>' );
 
         if ( current_user_can( 'manage_options' ) ) {
-            self::card( 'Erase', 'Delete this site and everything recorded for it. If it is still opted in, it reappears on its next report.', self::post_button( 'site_delete', 'Erase site data', [ 'site' => $site['id'] ], 'button button-link-delete', 'Erase all data for this site?' ) );
+            self::card( 'Erase', 'Delete this site and everything recorded for it, including its stored secret (use this if the site is refused after its WordPress salts changed). If it is still opted in, it reappears on its next report.', self::post_button( 'site_delete', 'Erase site data', [ 'site' => $site['id'] ], 'button button-link-delete', 'Erase all data for this site?' ) );
         }
         echo '</div></div>';
     }
@@ -437,14 +438,15 @@ class Admin
             . '<p class="description">Events, usage and activity older than this are deleted daily, as are sites not heard from for this long.</p></td></tr>'
             . '<tr><th><label for="insr_quiet">Quiet after</label></th><td><input id="insr_quiet" type="number" min="8" max="365" name="' . esc_attr( $o ) . '[quiet_days]" value="' . esc_attr( $s['quiet_days'] ) . '" class="small-text"> days'
             . '<p class="description">An active site silent for longer than this counts as quiet rather than live. The SDK reports weekly, so keep this above 7.</p></td></tr>'
-            . '<tr><th><label for="insr_rate">Rate limit</label></th><td><input id="insr_rate" type="number" min="10" name="' . esc_attr( $o ) . '[rate_limit]" value="' . esc_attr( $s['rate_limit'] ) . '" class="small-text"> requests per hour per IP address and product</td></tr>'
+            . '<tr><th><label for="insr_rate">Rate limit</label></th><td><input id="insr_rate" type="number" min="10" name="' . esc_attr( $o ) . '[rate_limit]" value="' . esc_attr( $s['rate_limit'] ) . '" class="small-text"> requests per hour per IP address and product key'
+            . '<p class="description">Behind a proxy or CDN, use the <code>insights_receiver_client_ip</code> filter to supply the visitor IP; otherwise every site shares the proxy’s limit.</p></td></tr>'
             . '<tr><th>Uninstall</th><td><label><input type="checkbox" name="' . esc_attr( $o ) . '[delete_on_uninstall]" value="1" ' . checked( $s['delete_on_uninstall'], 1, false ) . '> Delete all products and data when the plugin is deleted</label></td></tr>'
             . '</table>';
         submit_button();
         echo '</form>';
 
         $base = untrailingslashit( rest_url( 'insights/v1' ) );
-        echo '<h2>Receiving</h2><p>The SDK posts to <code>' . esc_html( $base ) . '/ingest</code> and <code>/erase</code>, identified by the product key. Requests are capped at 256 KB.</p>';
+        echo '<h2>Receiving</h2><p>The SDK posts to <code>' . esc_html( $base ) . '/ingest</code> and <code>/erase</code>, identified by the product key. Requests are capped at 256 KB. SDK 1.1+ also sends a per-install secret: once a site has sent one, requests for that site without it are refused, so the public key alone can’t overwrite or erase it.</p>';
 
         echo '<h2>Query API</h2><p>Read-only JSON endpoints. Authenticate as a user who can view Insights. Over HTTPS the simplest way is an <a href="' . esc_url( admin_url( 'profile.php#application-passwords-section' ) ) . '">application password</a>:</p>';
         echo '<pre class="insr-code">' . esc_html( 'curl -u "USERNAME:APPLICATION PASSWORD" "' . $base . '/features?product=1&days=30"' ) . '</pre>';
@@ -638,8 +640,9 @@ class Admin
         }
         echo '</select></label>';
 
+        $plans = Query::plans( $f['product'] );
         echo '<label>Plan <select name="plan"><option value="">Any</option>';
-        foreach ( array_merge( [ 'paid' => 'Paid', 'free' => 'Free', 'trial' => 'Trial' ], array_combine( Query::plans( $f['product'] ), Query::plans( $f['product'] ) ) ?: [] ) as $v => $label ) {
+        foreach ( array_merge( [ 'paid' => 'Paid', 'free' => 'Free', 'trial' => 'Trial' ], array_combine( $plans, $plans ) ?: [] ) as $v => $label ) {
             echo '<option value="' . esc_attr( $v ) . '" ' . selected( $f['plan'], (string) $v, false ) . '>' . esc_html( $label ) . '</option>';
         }
         echo '</select></label>';

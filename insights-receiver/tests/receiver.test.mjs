@@ -33,10 +33,11 @@ async function php(code) {
     wp_set_current_user( 1 );
     if ( ! function_exists( 'insr_post' ) ) {
       /** POST to an ingest route the way the SDK does. */
-      function insr_post( $path, $body, $key = null ) {
+      function insr_post( $path, $body, $key = null, $secret = null ) {
         $r = new WP_REST_Request( 'POST', '/insights/v1/' . $path );
         $r->set_header( 'content-type', 'application/json' );
         if ( $key ) $r->set_header( 'x-insights-key', $key );
+        if ( $secret ) $r->set_header( 'x-insights-site-secret', $secret );
         $r->set_body( wp_json_encode( $body ) );
         $res = rest_do_request( $r );
         return [ 'status' => $res->get_status(), 'data' => $res->get_data() ];
@@ -265,6 +266,33 @@ test('rate limit and erase', async () => {
   assert.equal(v.left, 0, 'no orphaned feature rows');
 });
 
+test('site secrets: once a site sends one, it is needed to update or erase it', async () => {
+  const v = await php(String.raw`
+    $k = ${JSON.stringify(ids.keyA)};
+    $s = str_repeat( 'a', 32 );
+    $t = str_repeat( 'b', 32 );
+    $site = 'https://secret.test';
+    $r = [
+      'claim'        => insr_post( 'ingest', [ 'site_id' => $site, 'events' => [] ], $k, $s )['status'],
+      'none'         => insr_post( 'ingest', [ 'site_id' => $site, 'events' => [] ], $k )['status'],
+      'wrong'        => insr_post( 'ingest', [ 'site_id' => $site, 'events' => [] ], $k, $t )['status'],
+      'erase_wrong'  => insr_post( 'erase', [ 'site_id' => $site ], $k, $t )['status'],
+      'kept'         => 0 !== \InsightsReceiver\Data::find_site( ${ids.a}, $site ),
+      // A site that reported without a secret (older SDK) is claimed by the first one it sends.
+      'legacy'       => insr_post( 'ingest', [ 'site_id' => 'https://s2.test', 'events' => [] ], $k, $t )['status'],
+      'legacy_after' => insr_post( 'ingest', [ 'site_id' => 'https://s2.test', 'events' => [] ], $k )['status'],
+    ];
+    $row = \InsightsReceiver\Query::site( \InsightsReceiver\Data::find_site( ${ids.a}, 'https://s2.test' ), 30 );
+    $r['api'] = [ array_key_exists( 'secret_hash', $row ), $row['has_secret'] ];
+    $r['erase_ok'] = insr_post( 'erase', [ 'site_id' => $site ], $k, $s )['status'];
+    $r['gone']     = 0 === \InsightsReceiver\Data::find_site( ${ids.a}, $site );
+    return $r;`);
+  assert.deepEqual(v, {
+    claim: 200, none: 403, wrong: 403, erase_wrong: 403, kept: true,
+    legacy: 200, legacy_after: 403, api: [false, true], erase_ok: 200, gone: true,
+  });
+});
+
 test('end to end: the real SDK reports into the receiver, and opting out erases', async () => {
   // Point the example plugin at this receiver, and deliver its HTTP calls to the ingest handlers directly.
   await php(String.raw`wp_mkdir_p( WP_CONTENT_DIR . '/mu-plugins' ); file_put_contents( WP_CONTENT_DIR . '/mu-plugins/insr-e2e.php', '<?php
@@ -295,6 +323,7 @@ test('end to end: the real SDK reports into the receiver, and opting out erases'
   assert.equal(v.sent, true, 'snapshot accepted');
   assert.ok(v.site, 'site recorded under the example product');
   assert.equal(v.site.plan, 'pro');
+  assert.equal(v.site.has_secret, true, 'the SDK sent its site secret');
   assert.deepEqual(v.site.features.filter(f => f.enabled).map(f => f.feature).sort(), ['dark_mode', 'exports']);
   assert.equal(v.site.features.find(f => f.feature === 'exports').uses_total, 2);
   assert.equal(v.site.features.find(f => f.feature === 'exports').tier, 'pro');

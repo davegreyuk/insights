@@ -4,7 +4,7 @@ Tags: analytics, telemetry, feature usage, plugin developers
 Requires at least: 6.9
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -33,7 +33,18 @@ You are the controller of the data you receive. It contains the site ID each pro
 2. Copy the snippet shown into your plugin or theme, which bundles the SDK in vendor/insights-sdk/.
 3. Data appears once a site opts in. The first snapshot arrives about a minute later.
 
+= Security =
+
+A product's key ships inside the product, so it isn't a secret. SDK 1.1+ also sends a per-install secret (derived from the reporting site's WordPress salts). The first secret a site sends is kept, hashed; after that, ingest and erase requests for that site without it are refused. Sites on older SDKs keep working without one until they upgrade. If a site's salts change it will be refused: erase it under Insights → Sites and it is re-created on its next report.
+
+Ingest is rate-limited per IP address and product key. Behind a reverse proxy or CDN, return the real client IP from the `insights_receiver_client_ip` filter.
+
 == Changelog ==
+
+= 1.1.0 =
+* Per-install site secrets: the public key alone can no longer overwrite or erase a site that has sent one.
+* Rate limit applies before the key lookup, per key; client IP is filterable for proxies.
+* Multibyte-safe truncation; concurrent first reports from one site no longer orphan data; usage counts are 64-bit.
 
 = 1.0.0 =
 * First release.

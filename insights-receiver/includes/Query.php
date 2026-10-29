@@ -633,8 +633,10 @@ class Query
 
     private static function site_row( array $r ): array
     {
-        $r           = self::ints( $r, [ 'id', 'product_id', 'first_seen', 'last_seen', 'last_snapshot', 'active', 'deactivated_at', 'multisite', 'features_on', 'features_total', 'uses' ] );
-        $r['status'] = self::status_of( $r );
+        $r               = self::ints( $r, [ 'id', 'product_id', 'first_seen', 'last_seen', 'last_snapshot', 'active', 'deactivated_at', 'multisite', 'features_on', 'features_total', 'uses' ] );
+        $r['status']     = self::status_of( $r );
+        $r['has_secret'] = ! empty( $r['secret_hash'] );
+        unset( $r['secret_hash'] );
         return $r;
     }
 
