@@ -1,0 +1,12 @@
+{
+  "name": "insights-receiver-tests",
+  "private": true,
+  "type": "module",
+  "description": "Insights Receiver in a throwaway WordPress Playground site, fed by the real Insights SDK.",
+  "scripts": {
+    "test": "node --test --test-reporter=spec --test-concurrency=1 \"*.test.mjs\""
+  },
+  "devDependencies": {
+    "@wp-playground/cli": "3.1.57"
+  }
+}
